@@ -68,7 +68,7 @@ jobs:
           "rm -rf \"${{ steps.vars.outputs.deploy_path }}\"/* || true"
 
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ascp -o StrictHostKeyChecking=no -r ./ ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}
+          scp -o StrictHostKeyChecking=no -r ./ ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}
 
       - name: Rollback on Failure
         if: failure() && github.event.inputs.env != 'dev'
