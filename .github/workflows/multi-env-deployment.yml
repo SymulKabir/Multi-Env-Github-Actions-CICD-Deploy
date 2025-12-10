@@ -49,9 +49,15 @@ jobs:
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
-          "if [ -d '${{ steps.vars.outputs.deploy_path }}' ]; then \
-             mv '${{ steps.vars.outputs.deploy_path }}' '${{ steps.vars.outputs.deploy_path }}.backup_$(date +%F_%T)'; \
-           fi"
+          "
+          # Remove all previous backups
+          rm -rf '${{ steps.vars.outputs.deploy_path }}.backup_*' || true
+
+          # Backup current deployment if it exists
+          if [ -d '${{ steps.vars.outputs.deploy_path }}' ]; then
+            mv '${{ steps.vars.outputs.deploy_path }}' '${{ steps.vars.outputs.deploy_path }}.backup_$(date +%F_%T)'
+          fi
+          "
 
       - name: Upload Entire Repository to Server
         run: |
