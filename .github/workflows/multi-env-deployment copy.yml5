@@ -1,4 +1,4 @@
-name: Full Repository Deployment (Password Based)
+name: Multi-Env Deployment Pipeline (Password Based)
 
 on:
   workflow_dispatch:
@@ -7,6 +7,9 @@ on:
         description: "Environment to deploy (dev, qa, uat, prod)"
         required: true
         default: "dev"
+      file_path:
+        description: "Relative path of file inside the repo"
+        required: true
 
 jobs:
   deploy:
@@ -38,33 +41,38 @@ jobs:
             echo "deploy_path=${{ secrets.PROD_PATH }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create Deploy Directory on Server
+      - name: Create Directory on Server
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
-          "mkdir -p '${{ steps.vars.outputs.deploy_path }}'"
+          ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          "mkdir -p '${{ steps.vars.outputs.deploy_path }}/$(dirname "${{ github.event.inputs.file_path }}")'"
 
-      - name: Backup Existing Deployment (QA/UAT/PROD)
+      - name: Backup Old File (QA/UAT/PROD)
         if: github.event.inputs.env != 'dev'
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
-          "if [ -d '${{ steps.vars.outputs.deploy_path }}' ]; then \
-             mv '${{ steps.vars.outputs.deploy_path }}' '${{ steps.vars.outputs.deploy_path }}.backup_$(date +%F_%T)'; \
+          ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          "if [ -f '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}' ]; then \
+             cp '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}' \
+                '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}.backup_$(date +%F_%T)'; \
            fi"
 
-      - name: Upload Entire Repository to Server
+      - name: Upload File to Server
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          scp -o StrictHostKeyChecking=no -r ./ ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}
+          scp -o StrictHostKeyChecking=no \
+          ${{ github.event.inputs.file_path }} \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}
 
       - name: Rollback on Failure
         if: failure()
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
-          "if ls '${{ steps.vars.outputs.deploy_path }}.backup_*' 1> /dev/null 2>&1; then \
-             latest_backup=$(ls -t '${{ steps.vars.outputs.deploy_path }}.backup_*' | head -n 1); \
-             rm -rf '${{ steps.vars.outputs.deploy_path }}'; \
-             mv \"$latest_backup\" '${{ steps.vars.outputs.deploy_path }}'; \
+          ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          "latest_backup=$(ls -t '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}.backup*' 2>/dev/null | head -n 1); \
+           if [ ! -z \"$latest_backup\" ]; then \
+             cp \"$latest_backup\" '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}'; \
            fi"
