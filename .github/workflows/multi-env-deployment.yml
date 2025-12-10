@@ -51,7 +51,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
           "
           # Remove all previous backups
-          rm -rf '${{ steps.vars.outputs.deploy_path }}.backup_*' || true
+          rm -rf "${{ steps.vars.outputs.deploy_path }}".backup_* || true
 
           # Backup current deployment if it exists
           if [ -d '${{ steps.vars.outputs.deploy_path }}' ]; then
