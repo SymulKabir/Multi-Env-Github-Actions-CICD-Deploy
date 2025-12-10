@@ -47,17 +47,19 @@ jobs:
       - name: Backup Existing Deployment (QA/UAT/PROD)
         if: github.event.inputs.env != 'dev'
         run: |
-          sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          sshpass -p "${{ secrets.SERVER_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
           "
-          # Remove all previous backups
-          rm -rf "${{ steps.vars.outputs.deploy_path }}".backup_* || true
+          # Check if deploy folder exists
+          if [ -d \"${{ steps.vars.outputs.deploy_path }}\" ]; then
+            # Remove all previous backups
+            rm -rf \"${{ steps.vars.outputs.deploy_path }}.backup_\"* || true
 
-          # Backup current deployment if it exists
-          if [ -d '${{ steps.vars.outputs.deploy_path }}' ]; then
-            mv '${{ steps.vars.outputs.deploy_path }}' '${{ steps.vars.outputs.deploy_path }}.backup_$(date +%F_%T)'
+            # Backup current deployment
+            mv \"${{ steps.vars.outputs.deploy_path }}\" \"${{ steps.vars.outputs.deploy_path }}.backup_\$(date +%F_%T)\"
           fi
           "
+
 
       - name: Upload Entire Repository to Server
         run: |
@@ -66,7 +68,7 @@ jobs:
           "rm -rf \"${{ steps.vars.outputs.deploy_path }}\"/* || true"
 
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ascp -o StrictHostKeyChecking=no -r ./ ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}
+          scp -o StrictHostKeyChecking=no -r ./ ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}
 
       - name: Rollback on Failure
         if: failure()
