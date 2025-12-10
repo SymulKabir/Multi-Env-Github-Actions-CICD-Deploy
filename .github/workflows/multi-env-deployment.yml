@@ -41,6 +41,20 @@ jobs:
             echo "deploy_path=${{ secrets.PROD_PATH }}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Ensure Local Directory Exists
+        run: |
+          dir=$(dirname "${{ github.event.inputs.file_path }}")
+          if [ ! -d "$dir" ]; then
+            echo "Local directory missing — creating: $dir"
+            mkdir -p "$dir"
+          fi
+
+      - name: Create Directory on Server
+        run: |
+          sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          "mkdir -p '${{ steps.vars.outputs.deploy_path }}/$(dirname "${{ github.event.inputs.file_path }}")'"
+
       - name: Backup Old File (QA/UAT/PROD)
         if: github.event.inputs.env != 'dev'
         run: |
