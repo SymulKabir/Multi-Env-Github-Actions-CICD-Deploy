@@ -8,7 +8,7 @@ on:
         required: true
         default: "dev"
       file_path:
-        description: "Path of file to deploy"
+        description: "Relative path of file inside the repo"
         required: true
 
 jobs:
@@ -41,25 +41,19 @@ jobs:
             echo "deploy_path=${{ secrets.PROD_PATH }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Ensure Local Directory Exists
-        run: |
-          dir=$(dirname "${{ github.event.inputs.file_path }}")
-          if [ ! -d "$dir" ]; then
-            echo "Local directory missing — creating: $dir"
-            mkdir -p "$dir"
-          fi
-
       - name: Create Directory on Server
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
           "mkdir -p '${{ steps.vars.outputs.deploy_path }}/$(dirname "${{ github.event.inputs.file_path }}")'"
 
       - name: Backup Old File (QA/UAT/PROD)
         if: github.event.inputs.env != 'dev'
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
           "if [ -f '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}' ]; then \
              cp '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}' \
                 '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}.backup_$(date +%F_%T)'; \
@@ -68,14 +62,16 @@ jobs:
       - name: Upload File to Server
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          scp -o StrictHostKeyChecking=no ${{ github.event.inputs.file_path }} \
+          scp -o StrictHostKeyChecking=no \
+          ${{ github.event.inputs.file_path }} \
           ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}
 
       - name: Rollback on Failure
         if: failure()
         run: |
           sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+          ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
           "latest_backup=$(ls -t '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}.backup*' 2>/dev/null | head -n 1); \
            if [ ! -z \"$latest_backup\" ]; then \
              cp \"$latest_backup\" '${{ steps.vars.outputs.deploy_path }}/${{ github.event.inputs.file_path }}'; \
