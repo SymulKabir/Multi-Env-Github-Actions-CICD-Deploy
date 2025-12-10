@@ -4,9 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       env:
-        description: "Environment to deploy (dev, qa, uat, prod)"
+        description: "Environment to deploy"
         required: true
         default: "dev"
+        type: choice
+        options:
+          - dev
+          - qa
+          - uat
+          - prod
+
 
 jobs:
   deploy:
