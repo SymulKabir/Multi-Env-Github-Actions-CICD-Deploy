@@ -15,6 +15,9 @@ on:
         default: "prod"
         type: choice
         options:
+          - dev
+          - qa
+          - uat
           - prod
 
 jobs:
