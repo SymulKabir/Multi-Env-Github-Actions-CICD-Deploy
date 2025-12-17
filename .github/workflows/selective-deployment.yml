@@ -1,4 +1,4 @@
-name: Selective Deployment (Manual Destination)
+name: Selective Deployment (File / Folder)
 
 on:
   push:
@@ -21,7 +21,7 @@ on:
           - prod
 
       source_path:
-        description: "Source file/folder (repo path, e.g. dist/, backend/app.js)"
+        description: "Source file or folder (repo path, e.g. dist/ or backend/app.js)"
         required: true
         type: string
 
@@ -76,18 +76,27 @@ jobs:
           ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
           "mkdir -p '${{ github.event.inputs.destination_path }}'"
 
-      - name: Upload Selected File/Folder
+      - name: Upload File or Folder (Safe)
         run: |
-          sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
-          scp -o StrictHostKeyChecking=no -r \
-          "${{ github.event.inputs.source_path }}" \
-          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:"${{ github.event.inputs.destination_path }}"
+          SOURCE="${{ github.event.inputs.source_path }}"
+          DEST="${{ github.event.inputs.destination_path }}"
 
-      - name: Rollback on Failure (QA/UAT/PROD)
-        if: failure() && steps.envdetect.outputs.env != 'dev'
-        run: |
-          sshpass -p "${{ secrets.SERVER_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
-          ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
-          "
-          echo 'Rollback skipped: selective deploy (no destructive change)'
-          "
+          if [ -d "$SOURCE" ]; then
+            echo "Deploying directory: $SOURCE"
+            tar -czf - -C "$SOURCE" . | \
+            sshpass -p "${{ secrets.SERVER_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }} \
+            "mkdir -p '$DEST' && tar -xzf - -C '$DEST'"
+          elif [ -f "$SOURCE" ]; then
+            echo "Deploying file: $SOURCE"
+            sshpass -p "${{ secrets.SERVER_PASSWORD }}" \
+            scp -o StrictHostKeyChecking=no \
+            "$SOURCE" \
+            ${{ secrets.SERVER_USER }}@${{ steps.vars.outputs.server }}:"$DEST"
+          else
+            echo "ERROR: Source path not found"
+            exit 1
+          fi
+
+      - name: Deployment Complete
+        run: echo "✅ Deployment finished successfully"
