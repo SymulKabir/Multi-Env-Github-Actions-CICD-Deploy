@@ -1,4 +1,4 @@
-name: Backup Selective Deployment (File / Folder) 
+name: Selective Deployment (File / Folder) 
 
 on:
   push:
