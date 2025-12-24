@@ -149,7 +149,7 @@ jobs:
                 echo 'ERROR: Release $ROLLBACK_VERSION not found!'
                 exit 1
               fi
-              ln -sfn $RELEASES/$ROLLBACK_VERSION $BASE/current
+              ln -sfn $RELEASES/$ROLLBACK_VERSION $BASE
             "
             echo "Rollback complete"
             exit 0
@@ -162,7 +162,7 @@ jobs:
           fi
 
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-            ln -sfn $NEW_RELEASE $BASE/current
+            ln -sfn $NEW_RELEASE $BASE
           "
 
       ###############################################
