@@ -37,18 +37,21 @@ jobs:
 
     steps:
       ################################################
-      # 1️⃣ Checkout repo with PAT for push
+      # 1️⃣ Checkout repo with PAT
       ################################################
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PAT_TOKEN }}
 
+      ################################################
+      # 2️⃣ Install sshpass
+      ################################################
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
       ################################################
-      # 2️⃣ Detect Environment
+      # 3️⃣ Detect Environment
       ################################################
       - name: Detect Environment
         id: envdetect
@@ -64,7 +67,7 @@ jobs:
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
 
       ################################################
-      # 3️⃣ Select Server
+      # 4️⃣ Select Server
       ################################################
       - name: Select Server
         id: vars
@@ -80,7 +83,7 @@ jobs:
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
 
       ################################################
-      # 4️⃣ Fetch releases and update rollback dropdown
+      # 5️⃣ Fetch releases and update rollback dropdown
       ################################################
       - name: Fetch releases and update rollback dropdown
         run: |
@@ -115,7 +118,7 @@ jobs:
           git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
 
       ################################################
-      # 5️⃣ Set release version
+      # 6️⃣ Set release version
       ################################################
       - name: Set Release Version
         id: release
@@ -124,7 +127,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       ################################################
-      # 6️⃣ Create Destination Directories
+      # 7️⃣ Create Destination Directories
       ################################################
       - name: Create Destination Directories
         run: |
@@ -142,7 +145,7 @@ jobs:
           "
 
       ################################################
-      # 7️⃣ Deploy or Rollback
+      # 8️⃣ Deploy or Rollback
       ################################################
       - name: Deploy or Rollback
         run: |
@@ -189,7 +192,7 @@ jobs:
           fi
 
       ################################################
-      # 8️⃣ Clean old releases (keep last 10)
+      # 9️⃣ Clean old releases (keep last 10)
       ################################################
       - name: Clean Old Releases
         if: ${{ github.event.inputs.rollback_version == '' }}
