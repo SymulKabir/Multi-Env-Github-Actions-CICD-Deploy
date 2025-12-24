@@ -48,14 +48,20 @@ jobs:
       - name: Detect Environment
         id: envdetect
         run: |
-          if [[ "${GITHUB_REF##*/}" == "development" ]]; then
+          BRANCH="${GITHUB_REF##*/}"
+
+          if [[ "$BRANCH" == "development" ]]; then
             echo "env=dev" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF##*/}" == "qatest" ]]; then
+
+          elif [[ "$BRANCH" == "qatest" ]]; then
             echo "env=qa" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF##*/}" == "uat" ]]; then
+
+          elif [[ "$BRANCH" == "uat" ]]; then
             echo "env=uat" >> $GITHUB_OUTPUT
+
           else
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Select Server
         id: vars
