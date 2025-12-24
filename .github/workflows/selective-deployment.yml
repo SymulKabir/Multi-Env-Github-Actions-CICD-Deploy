@@ -21,17 +21,17 @@ on:
           - prod
 
       source_path:
-        description: "Source file or folder (e.g. dist/ or backend/app.js)"
+        description: "Source file/folder"
         required: true
         type: string
 
       destination_path:
-        description: "Destination path on server (e.g. /var/www/app/)"
+        description: "Destination path on server"
         required: true
         type: string
 
       rollback_version:
-        description: "Rollback version (leave empty for normal deploy)"
+        description: "Rollback version"
         required: false
         type: string
 
@@ -65,7 +65,7 @@ jobs:
           fi
 
       ###############################################
-      # 2️⃣ Select Server Based on Env
+      # 2️⃣ Select Server
       ###############################################
       - name: Select Server
         id: vars
@@ -83,32 +83,7 @@ jobs:
           fi
 
       ###############################################
-      # 3️⃣ NEW — SHOW AVAILABLE ROLLBACK VERSIONS
-      ###############################################
-      - name: Fetch Rollback Release Versions (List)
-        run: |
-          SERVER="${{ steps.vars.outputs.server }}"
-          USER="${{ secrets.SERVER_USER }}"
-          PASS="${{ secrets.SERVER_PASSWORD }}"
-          BASE="${{ github.event.inputs.destination_path }}"
-          RELEASES="$BASE/releases"
-
-          echo "========== AVAILABLE RELEASES =========="
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "ls -1 $RELEASES"
-          echo "========================================"
-          echo "Copy a version above → paste into rollback_version dropdown if needed."
-
-      ###############################################
-      # 4️⃣ Generate New Release Version
-      ###############################################
-      - name: Set Release Version
-        id: release
-        run: |
-          VERSION=$(date +"%Y%m%d%H%M%S")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      ###############################################
-      # 5️⃣ Create Directories
+      # 3️⃣ FIX — Create required directories FIRST
       ###############################################
       - name: Create Destination Directories
         run: |
@@ -117,13 +92,36 @@ jobs:
           PASS="${{ secrets.SERVER_PASSWORD }}"
           BASE="${{ github.event.inputs.destination_path }}"
           RELEASES="$BASE/releases"
-          VERSION="${{ steps.release.outputs.version }}"
-          NEW_RELEASE="$RELEASES/$VERSION"
 
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-            mkdir -p $NEW_RELEASE
             mkdir -p $RELEASES
           "
+
+      ###############################################
+      # 4️⃣ List available releases (no error)
+      ###############################################
+      - name: Fetch Rollback Release Versions
+        run: |
+          SERVER="${{ steps.vars.outputs.server }}"
+          USER="${{ secrets.SERVER_USER }}"
+          PASS="${{ secrets.SERVER_PASSWORD }}"
+          BASE="${{ github.event.inputs.destination_path }}"
+          RELEASES="$BASE/releases"
+
+          echo "========== AVAILABLE RELEASES =========="
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+            [ -d $RELEASES ] && ls -1 $RELEASES || echo 'No releases found'
+          "
+          echo "========================================"
+
+      ###############################################
+      # 5️⃣ Generate Version
+      ###############################################
+      - name: Set Release Version
+        id: release
+        run: |
+          VERSION=$(date +"%Y%m%d%H%M%S")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       ###############################################
       # 6️⃣ Deploy or Rollback
@@ -138,6 +136,11 @@ jobs:
           VERSION="${{ steps.release.outputs.version }}"
           NEW_RELEASE="$RELEASES/$VERSION"
           ROLLBACK_VERSION="${{ github.event.inputs.rollback_version }}"
+          SOURCE="${{ github.event.inputs.source_path }}"
+
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+            mkdir -p $NEW_RELEASE
+          "
 
           if [ -n "$ROLLBACK_VERSION" ]; then
             echo "Rollback mode → version: $ROLLBACK_VERSION"
@@ -148,34 +151,24 @@ jobs:
               fi
               ln -sfn $RELEASES/$ROLLBACK_VERSION $BASE/current
             "
-            echo "✅ Rollback complete → $ROLLBACK_VERSION"
-          else
-            SOURCE="${{ github.event.inputs.source_path }}"
-
-            if [ -d "$SOURCE" ]; then
-              echo "Deploying directory: $SOURCE"
-              tar -czf - -C "$SOURCE" . | \
-              sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER \
-              "tar -xzf - -C $NEW_RELEASE"
-            elif [ -f "$SOURCE" ]; then
-              echo "Deploying file: $SOURCE"
-              sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$SOURCE" $USER@$SERVER:"$NEW_RELEASE/"
-            else
-              echo "ERROR: Source path not found"
-              exit 1
-            fi
-
-            sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-              ln -sfn $NEW_RELEASE $BASE/current
-            "
-
-            echo "✅ Deployment complete → version: $VERSION"
+            echo "Rollback complete"
+            exit 0
           fi
 
+          if [ -d "$SOURCE" ]; then
+            tar -czf - -C "$SOURCE" . | sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "tar -xzf - -C $NEW_RELEASE"
+          else
+            sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$SOURCE" $USER@$SERVER:"$NEW_RELEASE/"
+          fi
+
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+            ln -sfn $NEW_RELEASE $BASE/current
+          "
+
       ###############################################
-      # 7️⃣ Auto-Clean Old Releases
+      # 7️⃣ Clean old releases
       ###############################################
-      - name: Clean Old Releases (Keep last 10)
+      - name: Clean Old Releases
         if: ${{ github.event.inputs.rollback_version == '' }}
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
