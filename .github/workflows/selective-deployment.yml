@@ -1,6 +1,12 @@
 name: Selective Deployment (File / Folder)
 
 on:
+  push:
+    branches:
+      - development
+      - qatest
+      - uat
+
   workflow_dispatch:
     inputs:
       env:
@@ -25,38 +31,29 @@ on:
         type: string
 
       rollback_version:
-        description: "Select rollback version (leave empty for normal deploy)"
+        description: "Rollback version (leave empty for normal deploy)"
         required: false
-        type: choice
-        options:
-          - placeholder # will be replaced automatically
+        type: string
 
 jobs:
-  update_and_deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      ################################################
-      # 1️⃣ Checkout repo with PAT
-      ################################################
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
 
-      ################################################
-      # 2️⃣ Install sshpass
-      ################################################
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      ################################################
-      # 3️⃣ Detect Environment
-      ################################################
+      ###############################################
+      # 1️⃣ Detect Environment
+      ###############################################
       - name: Detect Environment
         id: envdetect
         run: |
           BRANCH="${GITHUB_REF##*/}"
+
           if [[ "$BRANCH" == "development" ]]; then
             echo "env=dev" >> $GITHUB_OUTPUT
           elif [[ "$BRANCH" == "qatest" ]]; then
@@ -65,14 +62,16 @@ jobs:
             echo "env=uat" >> $GITHUB_OUTPUT
           else
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
+          fi
 
-      ################################################
-      # 4️⃣ Select Server
-      ################################################
+      ###############################################
+      # 2️⃣ Select Server Based on Env
+      ###############################################
       - name: Select Server
         id: vars
         run: |
           ENV="${{ steps.envdetect.outputs.env }}"
+
           if [[ "$ENV" == "dev" ]]; then
             echo "server=${{ secrets.DEV_SERVER }}" >> $GITHUB_OUTPUT
           elif [[ "$ENV" == "qa" ]]; then
@@ -81,51 +80,36 @@ jobs:
             echo "server=${{ secrets.UAT_SERVER }}" >> $GITHUB_OUTPUT
           elif [[ "$ENV" == "prod" ]]; then
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
+          fi
 
-      ################################################
-      # 5️⃣ Fetch releases and update rollback dropdown
-      ################################################
-      - name: Fetch releases and update rollback dropdown
+      ###############################################
+      # 3️⃣ NEW — SHOW AVAILABLE ROLLBACK VERSIONS
+      ###############################################
+      - name: Fetch Rollback Release Versions (List)
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
           USER="${{ secrets.SERVER_USER }}"
           PASS="${{ secrets.SERVER_PASSWORD }}"
           BASE="${{ github.event.inputs.destination_path }}"
           RELEASES="$BASE/releases"
-          WORKFLOW_FILE=".github/workflows/selective-deployment.yml"
 
-          mkdir -p tmp_releases
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "ls -1t $RELEASES" > tmp_releases/list.txt || echo ""
+          echo "========== AVAILABLE RELEASES =========="
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "ls -1 $RELEASES"
+          echo "========================================"
+          echo "Copy a version above → paste into rollback_version dropdown if needed."
 
-          VERSIONS=$(cat tmp_releases/list.txt | tr '\n' ',' | sed 's/,$//')
-          OPTIONS=$(echo $VERSIONS | tr ',' '\n' | sed 's/^/          - /')
-
-          awk -v options="$OPTIONS" '
-            BEGIN {in_block=0}
-            /^      rollback_version:/ {print; in_block=1; next}
-            in_block && /^        type: choice/ {print; print "        options:\n" options; in_block=0; next}
-            {print}
-          ' $WORKFLOW_FILE > $WORKFLOW_FILE.tmp
-          mv $WORKFLOW_FILE.tmp $WORKFLOW_FILE
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add $WORKFLOW_FILE
-          git commit -m "Update rollback_version options [ci skip]" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
-
-      ################################################
-      # 6️⃣ Set release version
-      ################################################
+      ###############################################
+      # 4️⃣ Generate New Release Version
+      ###############################################
       - name: Set Release Version
         id: release
         run: |
           VERSION=$(date +"%Y%m%d%H%M%S")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      ################################################
-      # 7️⃣ Create Destination Directories
-      ################################################
+      ###############################################
+      # 5️⃣ Create Directories
+      ###############################################
       - name: Create Destination Directories
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
@@ -141,9 +125,9 @@ jobs:
             mkdir -p $RELEASES
           "
 
-      ################################################
-      # 8️⃣ Deploy or Rollback
-      ################################################
+      ###############################################
+      # 6️⃣ Deploy or Rollback
+      ###############################################
       - name: Deploy or Rollback
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
@@ -167,6 +151,7 @@ jobs:
             echo "✅ Rollback complete → $ROLLBACK_VERSION"
           else
             SOURCE="${{ github.event.inputs.source_path }}"
+
             if [ -d "$SOURCE" ]; then
               echo "Deploying directory: $SOURCE"
               tar -czf - -C "$SOURCE" . | \
@@ -183,13 +168,14 @@ jobs:
             sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
               ln -sfn $NEW_RELEASE $BASE/current
             "
+
             echo "✅ Deployment complete → version: $VERSION"
           fi
 
-      ################################################
-      # 9️⃣ Clean old releases (keep last 10)
-      ################################################
-      - name: Clean Old Releases
+      ###############################################
+      # 7️⃣ Auto-Clean Old Releases
+      ###############################################
+      - name: Clean Old Releases (Keep last 10)
         if: ${{ github.event.inputs.rollback_version == '' }}
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
