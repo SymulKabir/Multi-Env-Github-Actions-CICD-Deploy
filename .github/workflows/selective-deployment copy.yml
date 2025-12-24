@@ -1,6 +1,11 @@
-name: Selective Deployment (File / Folder)
+name: Backup Selective Deployment (File / Folder) 
 
 on:
+  push:
+    branches:
+      - development
+      - qatest
+      - uat
   workflow_dispatch:
     inputs:
       env:
@@ -15,7 +20,7 @@ on:
           - prod
 
       source_path:
-        description: "Source file or folder (e.g. dist/ or backend/app.js)"
+        description: "Source file or folder (repo path, e.g. dist/ or backend/app.js)"
         required: true
         type: string
 
@@ -25,107 +30,63 @@ on:
         type: string
 
       rollback_version:
-        description: "Select rollback version (leave empty for normal deploy)"
+        description: "Optional: Enter version to rollback (e.g. 20251223121530). Leave empty to deploy normally."
         required: false
-        type: choice
-        options:
-          - placeholder # will be replaced automatically
+        type: string
 
 jobs:
-  update_and_deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      ################################################
-      # 1️⃣ Checkout repo with PAT for push
-      ################################################
-      - name: Checkout repo
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      ################################################
-      # 2️⃣ Detect Environment
-      ################################################
       - name: Detect Environment
         id: envdetect
         run: |
           BRANCH="${GITHUB_REF##*/}"
+
           if [[ "$BRANCH" == "development" ]]; then
             echo "env=dev" >> $GITHUB_OUTPUT
+
           elif [[ "$BRANCH" == "qatest" ]]; then
             echo "env=qa" >> $GITHUB_OUTPUT
+
           elif [[ "$BRANCH" == "uat" ]]; then
             echo "env=uat" >> $GITHUB_OUTPUT
+
           else
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
+          fi
 
-      ################################################
-      # 3️⃣ Select Server
-      ################################################
       - name: Select Server
         id: vars
         run: |
           ENV="${{ steps.envdetect.outputs.env }}"
+
           if [[ "$ENV" == "dev" ]]; then
             echo "server=${{ secrets.DEV_SERVER }}" >> $GITHUB_OUTPUT
+
           elif [[ "$ENV" == "qa" ]]; then
             echo "server=${{ secrets.QA_SERVER }}" >> $GITHUB_OUTPUT
+
           elif [[ "$ENV" == "uat" ]]; then
             echo "server=${{ secrets.UAT_SERVER }}" >> $GITHUB_OUTPUT
+
           elif [[ "$ENV" == "prod" ]]; then
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
+          fi
 
-      ################################################
-      # 4️⃣ Fetch releases and update rollback dropdown
-      ################################################
-      - name: Fetch releases and update rollback dropdown
-        run: |
-          SERVER="${{ steps.vars.outputs.server }}"
-          USER="${{ secrets.SERVER_USER }}"
-          PASS="${{ secrets.SERVER_PASSWORD }}"
-          BASE="${{ github.event.inputs.destination_path }}"
-          RELEASES="$BASE/releases"
-          WORKFLOW_FILE=".github/workflows/selective-deployment.yml"
-
-          echo "Fetching releases..."
-          VERSIONS=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "ls -1t $RELEASES" | tr '\n' ',' | sed 's/,$//')
-          echo "Versions: $VERSIONS"
-
-          # Convert to YAML list
-          OPTIONS=$(echo $VERSIONS | tr ',' '\n' | sed 's/^/          - /')
-
-          # Replace rollback_version options
-          awk -v options="$OPTIONS" '
-            BEGIN {in_block=0}
-            /^      rollback_version:/ {print; in_block=1; next}
-            in_block && /^        type: choice/ {print; print "        options:\n" options; in_block=0; next}
-            {print}
-          ' $WORKFLOW_FILE > $WORKFLOW_FILE.tmp
-          mv $WORKFLOW_FILE.tmp $WORKFLOW_FILE
-
-          # Commit & push updated workflow using PAT
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add $WORKFLOW_FILE
-          git commit -m "Update rollback_version options [ci skip]" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
-
-      ################################################
-      # 5️⃣ Set release version
-      ################################################
       - name: Set Release Version
         id: release
         run: |
           VERSION=$(date +"%Y%m%d%H%M%S")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      ################################################
-      # 6️⃣ Create Destination Directories
-      ################################################
       - name: Create Destination Directories
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
@@ -141,9 +102,6 @@ jobs:
             mkdir -p $RELEASES
           "
 
-      ################################################
-      # 7️⃣ Deploy or Rollback
-      ################################################
       - name: Deploy or Rollback
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
@@ -164,7 +122,7 @@ jobs:
               fi
               ln -sfn $RELEASES/$ROLLBACK_VERSION $BASE/current
             "
-            echo "✅ Rollback complete → $ROLLBACK_VERSION"
+            echo "✅ Rollback complete → version: $ROLLBACK_VERSION"
           else
             SOURCE="${{ github.event.inputs.source_path }}"
 
@@ -188,10 +146,7 @@ jobs:
             echo "✅ Deployment complete → version: $VERSION"
           fi
 
-      ################################################
-      # 8️⃣ Clean old releases (keep last 10)
-      ################################################
-      - name: Clean Old Releases
+      - name: Clean Old Releases (Keep last 10)
         if: ${{ github.event.inputs.rollback_version == '' }}
         run: |
           SERVER="${{ steps.vars.outputs.server }}"
