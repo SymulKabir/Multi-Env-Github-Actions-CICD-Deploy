@@ -67,14 +67,19 @@ jobs:
         id: vars
         run: |
           ENV="${{ steps.envdetect.outputs.env }}"
+
           if [[ "$ENV" == "dev" ]]; then
             echo "server=${{ secrets.DEV_SERVER }}" >> $GITHUB_OUTPUT
+
           elif [[ "$ENV" == "qa" ]]; then
             echo "server=${{ secrets.QA_SERVER }}" >> $GITHUB_OUTPUT
+
           elif [[ "$ENV" == "uat" ]]; then
             echo "server=${{ secrets.UAT_SERVER }}" >> $GITHUB_OUTPUT
+
           elif [[ "$ENV" == "prod" ]]; then
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set Release Version
         id: release
