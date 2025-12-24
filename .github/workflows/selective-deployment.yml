@@ -29,7 +29,7 @@ on:
         required: false
         type: choice
         options:
-          - placeholder
+          - placeholder # will be replaced automatically
 
 jobs:
   update_and_deploy:
@@ -37,7 +37,7 @@ jobs:
 
     steps:
       ################################################
-      # 1️⃣ Checkout repo with token
+      # 1️⃣ Checkout repo with PAT
       ################################################
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -67,7 +67,7 @@ jobs:
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
 
       ################################################
-      # 4️⃣ Select Server based on environment
+      # 4️⃣ Select Server
       ################################################
       - name: Select Server
         id: vars
@@ -83,7 +83,39 @@ jobs:
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
 
       ################################################
-      # 5️⃣ Set release version
+      # 5️⃣ Fetch releases and update rollback dropdown
+      ################################################
+      - name: Fetch releases and update rollback dropdown
+        run: |
+          SERVER="${{ steps.vars.outputs.server }}"
+          USER="${{ secrets.SERVER_USER }}"
+          PASS="${{ secrets.SERVER_PASSWORD }}"
+          BASE="${{ github.event.inputs.destination_path }}"
+          RELEASES="$BASE/releases"
+          WORKFLOW_FILE=".github/workflows/selective-deployment.yml"
+
+          mkdir -p tmp_releases
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "ls -1t $RELEASES" > tmp_releases/list.txt || echo ""
+
+          VERSIONS=$(cat tmp_releases/list.txt | tr '\n' ',' | sed 's/,$//')
+          OPTIONS=$(echo $VERSIONS | tr ',' '\n' | sed 's/^/          - /')
+
+          awk -v options="$OPTIONS" '
+            BEGIN {in_block=0}
+            /^      rollback_version:/ {print; in_block=1; next}
+            in_block && /^        type: choice/ {print; print "        options:\n" options; in_block=0; next}
+            {print}
+          ' $WORKFLOW_FILE > $WORKFLOW_FILE.tmp
+          mv $WORKFLOW_FILE.tmp $WORKFLOW_FILE
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add $WORKFLOW_FILE
+          git commit -m "Update rollback_version options [ci skip]" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
+
+      ################################################
+      # 6️⃣ Set release version
       ################################################
       - name: Set Release Version
         id: release
@@ -92,7 +124,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       ################################################
-      # 6️⃣ Create Destination Directories
+      # 7️⃣ Create Destination Directories
       ################################################
       - name: Create Destination Directories
         run: |
@@ -110,7 +142,7 @@ jobs:
           "
 
       ################################################
-      # 7️⃣ Deploy or Rollback
+      # 8️⃣ Deploy or Rollback
       ################################################
       - name: Deploy or Rollback
         run: |
@@ -123,7 +155,7 @@ jobs:
           NEW_RELEASE="$RELEASES/$VERSION"
           ROLLBACK_VERSION="${{ github.event.inputs.rollback_version }}"
 
-          if [ -n "$ROLLBACK_VERSION" ] && [ "$ROLLBACK_VERSION" != "placeholder" ]; then
+          if [ -n "$ROLLBACK_VERSION" ]; then
             echo "Rollback mode → version: $ROLLBACK_VERSION"
             sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
               if [ ! -d $RELEASES/$ROLLBACK_VERSION ]; then
@@ -155,7 +187,7 @@ jobs:
           fi
 
       ################################################
-      # 8️⃣ Clean old releases (keep last 10)
+      # 9️⃣ Clean old releases (keep last 10)
       ################################################
       - name: Clean Old Releases
         if: ${{ github.event.inputs.rollback_version == '' }}
