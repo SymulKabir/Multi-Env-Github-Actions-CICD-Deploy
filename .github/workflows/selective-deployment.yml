@@ -52,7 +52,6 @@ jobs:
             echo "env=uat" >> $GITHUB_OUTPUT
           else
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Select Server
         id: server
@@ -66,7 +65,6 @@ jobs:
             echo "server=${{ secrets.UAT_SERVER }}" >> $GITHUB_OUTPUT
           elif [[ "$ENV" == "prod" ]]; then
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Set Release Version
         id: release
@@ -101,38 +99,45 @@ jobs:
               fi
             fi
 
+            echo "Copying rollback version $ROLLBACK_VERSION → $DEST"
             sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-              if [ ! -d $ROLLBACK_BASE/$ROLLBACK_VERSION ]; then
-                echo '❌ Rollback version $ROLLBACK_VERSION not found'
-                exit 1
-              fi
-              ln -sfn $ROLLBACK_BASE/$ROLLBACK_VERSION $DEST/current
+              rm -rf $DEST/* && cp -r $ROLLBACK_BASE/$ROLLBACK_VERSION/* $DEST/
             "
             echo "✅ Rollback complete → version: $ROLLBACK_VERSION"
             exit 0
           fi
 
           # Deploy new release if source is provided
-          NEW_RELEASE="$ROLLBACK_BASE/$VERSION"
+          echo "Deploying source $SOURCE → $DEST"
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-            mkdir -p $NEW_RELEASE
+            mkdir -p $DEST
           "
 
           if [ -d "$SOURCE" ]; then
-            echo "Deploying directory: $SOURCE → $NEW_RELEASE"
-            tar -czf - -C "$SOURCE" . | sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "tar -xzf - -C $NEW_RELEASE"
+            tar -czf - -C "$SOURCE" . | sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "tar -xzf - -C $DEST"
           elif [ -f "$SOURCE" ]; then
-            echo "Deploying file: $SOURCE → $NEW_RELEASE"
-            sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$SOURCE" $USER@$SERVER:"$NEW_RELEASE/"
+            sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$SOURCE" $USER@$SERVER:"$DEST/"
           else
             echo "❌ Source path not found"
             exit 1
           fi
 
+          echo "✅ Deployment complete → $DEST"
+
+      - name: Save New Rollback Version
+        if: ${{ github.event.inputs.source_path != '' }}
+        run: |
+          SERVER="${{ steps.server.outputs.server }}"
+          USER="${{ secrets.SERVER_USER }}"
+          PASS="${{ secrets.SERVER_PASSWORD }}"
+          ENV="${{ steps.envdetect.outputs.env }}"
+          DEST="${{ github.event.inputs.destination_path }}"
+          VERSION="${{ steps.release.outputs.version }}"
+          ROLLBACK_BASE="/var/rollback/$ENV/release/$VERSION"
+
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-            ln -sfn $NEW_RELEASE $DEST/current
+            mkdir -p $ROLLBACK_BASE && cp -r $DEST/* $ROLLBACK_BASE/
           "
-          echo "✅ Deployment complete → version: $VERSION"
 
       - name: Clean Old Rollback Versions (Keep last 10)
         if: ${{ github.event.inputs.source_path != '' }}
