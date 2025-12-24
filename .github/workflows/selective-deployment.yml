@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       env:
-        description: "Deployment Environment"
+        description: "Environment"
         required: true
         default: "prod"
         type: choice
@@ -15,17 +15,17 @@ on:
           - prod
 
       destination_path:
-        description: "Destination path on server (required)"
+        description: "Destination path on server"
         required: true
         type: string
 
       source_path:
-        description: "Optional: Source file or folder to deploy"
+        description: "Optional: Source file or folder to deploy. Leave empty to trigger rollback."
         required: false
         type: string
 
       rollback_version:
-        description: "Optional: version to rollback. If not provided, will take last version"
+        description: "Optional: version to rollback. Leave empty to use latest rollback version."
         required: false
         type: string
 
@@ -34,13 +34,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      - name: Detect environment
+      - name: Detect Environment
         id: envdetect
         run: |
           BRANCH="${GITHUB_REF##*/}"
@@ -52,9 +52,10 @@ jobs:
             echo "env=uat" >> $GITHUB_OUTPUT
           else
             echo "env=${{ github.event.inputs.env }}" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Select server
-        id: vars
+      - name: Select Server
+        id: server
         run: |
           ENV="${{ steps.envdetect.outputs.env }}"
           if [[ "$ENV" == "dev" ]]; then
@@ -65,62 +66,84 @@ jobs:
             echo "server=${{ secrets.UAT_SERVER }}" >> $GITHUB_OUTPUT
           elif [[ "$ENV" == "prod" ]]; then
             echo "server=${{ secrets.PROD_SERVER }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set Release Version
+        id: release
+        run: |
+          VERSION=$(date +"%Y%m%d%H%M%S")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Deploy or Rollback
         run: |
-          SERVER="${{ steps.vars.outputs.server }}"
+          SERVER="${{ steps.server.outputs.server }}"
           USER="${{ secrets.SERVER_USER }}"
           PASS="${{ secrets.SERVER_PASSWORD }}"
-          BASE="${{ github.event.inputs.destination_path }}"
+          DEST="${{ github.event.inputs.destination_path }}"
           SOURCE="${{ github.event.inputs.source_path }}"
+          ROLLBACK_VERSION="${{ github.event.inputs.rollback_version }}"
           ENV="${{ steps.envdetect.outputs.env }}"
           ROLLBACK_BASE="/var/rollback/$ENV/release"
-          ROLLBACK_VERSION="${{ github.event.inputs.rollback_version }}"
+          VERSION="${{ steps.release.outputs.version }}"
 
-          # Decide mode: Deploy or Rollback
+          # Rollback if no source provided
           if [ -z "$SOURCE" ]; then
-            echo "🚀 Source not provided → Running Rollback"
-
-            # Use input rollback_version if provided, else last version
             if [ -n "$ROLLBACK_VERSION" ]; then
               echo "Manual rollback → version: $ROLLBACK_VERSION"
-              sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-                if [ ! -d $ROLLBACK_BASE/$ROLLBACK_VERSION ]; then
-                  echo '❌ Rollback version $ROLLBACK_VERSION not found!'
-                  exit 1
-                fi
-                rsync -a --delete $ROLLBACK_BASE/$ROLLBACK_VERSION/ $BASE/
-              "
             else
-              echo "Auto rollback → using last version"
-              LAST_VERSION=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+              echo "No rollback version provided → auto rollback to latest"
+              ROLLBACK_VERSION=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
                 [ -d $ROLLBACK_BASE ] && ls -1t $ROLLBACK_BASE | head -n 1
               ")
-              if [ -z "$LAST_VERSION" ]; then
-                echo "❌ No rollback version found in $ROLLBACK_BASE"
+              if [ -z "$ROLLBACK_VERSION" ]; then
+                echo "❌ No rollback versions found in $ROLLBACK_BASE"
                 exit 1
               fi
-              echo "Auto rollback → version: $LAST_VERSION"
-              sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-                rsync -a --delete $ROLLBACK_BASE/$LAST_VERSION/ $BASE/
-              "
             fi
 
-            echo "✅ Rollback completed"
+            sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+              if [ ! -d $ROLLBACK_BASE/$ROLLBACK_VERSION ]; then
+                echo '❌ Rollback version $ROLLBACK_VERSION not found'
+                exit 1
+              fi
+              ln -sfn $ROLLBACK_BASE/$ROLLBACK_VERSION $DEST/current
+            "
+            echo "✅ Rollback complete → version: $ROLLBACK_VERSION"
             exit 0
           fi
 
-          # Deploy mode
-          echo "📦 Deploying source → $SOURCE"
-          VERSION=$(date +"%Y%m%d%H%M%S")
-          DEST_DIR="$BASE/$VERSION"
+          # Deploy new release if source is provided
+          NEW_RELEASE="$ROLLBACK_BASE/$VERSION"
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
-            mkdir -p $DEST_DIR
+            mkdir -p $NEW_RELEASE
           "
+
           if [ -d "$SOURCE" ]; then
-            tar -czf - -C "$SOURCE" . | sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "tar -xzf - -C $DEST_DIR"
+            echo "Deploying directory: $SOURCE → $NEW_RELEASE"
+            tar -czf - -C "$SOURCE" . | sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "tar -xzf - -C $NEW_RELEASE"
           elif [ -f "$SOURCE" ]; then
-            sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$SOURCE" $USER@$SERVER:"$DEST_DIR/"
+            echo "Deploying file: $SOURCE → $NEW_RELEASE"
+            sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$SOURCE" $USER@$SERVER:"$NEW_RELEASE/"
+          else
+            echo "❌ Source path not found"
+            exit 1
           fi
 
-          echo "✅ Deployment completed → version: $VERSION"
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+            ln -sfn $NEW_RELEASE $DEST/current
+          "
+          echo "✅ Deployment complete → version: $VERSION"
+
+      - name: Clean Old Rollback Versions (Keep last 10)
+        if: ${{ github.event.inputs.source_path != '' }}
+        run: |
+          SERVER="${{ steps.server.outputs.server }}"
+          USER="${{ secrets.SERVER_USER }}"
+          PASS="${{ secrets.SERVER_PASSWORD }}"
+          ENV="${{ steps.envdetect.outputs.env }}"
+          ROLLBACK_BASE="/var/rollback/$ENV/release"
+          KEEP=10
+
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no $USER@$SERVER "
+            [ -d $ROLLBACK_BASE ] && cd $ROLLBACK_BASE && ls -1t | tail -n +$((KEEP+1)) | xargs -r rm -rf
+          "
